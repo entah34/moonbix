@@ -244,11 +244,13 @@ class Binance {
 
         const { userInfo, accessToken } = result;
         const totalGrade = userInfo.metaInfo.totalGrade;
-        let availableTickets = userInfo.metaInfo.totalAttempts;
+        let totalAttempts = userInfo.metaInfo.totalAttempts; 
+        let consumedAttempts = userInfo.metaInfo.consumedAttempts; 
+        let availableTickets = totalAttempts-consumedAttempts;
 
         this.log(`Tổng điểm: ${totalGrade}`);
         this.log(`Vé đang có: ${availableTickets}`);
-        
+        await this.completeTasks(accessToken)
         while (availableTickets > 0) {
             this.log(`Bắt đầu game với ${availableTickets} vé có sẵn`, 'info');
             

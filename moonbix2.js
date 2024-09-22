@@ -2,11 +2,15 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const colors = require('colors');
-const readline = require('readline');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 
 class Binance {
-    constructor() {
+    constructor(accountIndex, queryString, proxy) {
+        this.accountIndex = accountIndex;
+        this.queryString = queryString;
+        this.proxy = proxy;
+        this.proxyIP = "Unknown";
         this.headers = {
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate, br",
@@ -15,71 +19,71 @@ class Binance {
             "Origin": "https://www.binance.com",
             "Referer": "https://www.binance.com/vi/game/tg/moon-bix",
             "Sec-Ch-Ua": '"Not/A)Brand";v="99", "Google Chrome";v="115", "Chromium";v="115"',
-            "Sec-Ch-Ua-Mobile": "?0",
-            "Sec-Ch-Ua-Platform": '"Windows"',
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            "Sec-Ch-Ua-Mobile": "?1",
+            "Sec-Ch-Ua-Platform": '"Android"',
+            "User-Agent": this.getRandomAndroidUserAgent()
         };
         this.game_response = null;
         this.game = null;
-        this.proxies = this.loadProxies();
     }
 
-    loadProxies() {
-        const proxyFile = path.join(__dirname, 'proxy.txt');
-        return fs.readFileSync(proxyFile, 'utf8').split('\n').filter(Boolean);
+    getRandomAndroidUserAgent() {
+        const androidUserAgents = [
+            "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 11; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 12; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.62 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 11; OnePlus 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.164 Mobile Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Mobile Safari/537.36"
+        ];
+        return androidUserAgents[Math.floor(Math.random() * androidUserAgents.length)];
     }
 
-    createAxiosInstance(proxy) {
-        const proxyAgent = new HttpsProxyAgent(proxy);
+    async log(msg, type = 'info') {
+        const timestamp = new Date().toLocaleTimeString();
+        const accountPrefix = `[Tài khoản ${this.accountIndex + 1}]`;
+        const ipPrefix = this.proxyIP ? `[${this.proxyIP}]` : '[Unknown IP]';
+        let logMessage = '';
+        
+        switch(type) {
+            case 'success':
+                logMessage = `${accountPrefix}${ipPrefix} ${msg}`.green;
+                break;
+            case 'error':
+                logMessage = `${accountPrefix}${ipPrefix} ${msg}`.red;
+                break;
+            case 'warning':
+                logMessage = `${accountPrefix}${ipPrefix} ${msg}`.yellow;
+                break;
+            case 'custom':
+                logMessage = `${accountPrefix}${ipPrefix} ${msg}`.magenta;
+                break;
+            default:
+                logMessage = `${accountPrefix}${ipPrefix} ${msg}`.blue;
+        }
+        
+        console.log(`[${timestamp}] ${logMessage}`);
+    }
+
+    createAxiosInstance() {
+        const proxyAgent = new HttpsProxyAgent(this.proxy);
         return axios.create({
             headers: this.headers,
             httpsAgent: proxyAgent
         });
     }
 
-    async checkProxyIP(proxy) {
+    async checkProxyIP() {
         try {
-            const proxyAgent = new HttpsProxyAgent(proxy);
+            const proxyAgent = new HttpsProxyAgent(this.proxy);
             const response = await axios.get('https://api.ipify.org?format=json', { httpsAgent: proxyAgent });
             if (response.status === 200) {
-                return response.data.ip;
+                this.proxyIP = response.data.ip;
             } else {
                 throw new Error(`Không thể kiểm tra IP của proxy. Status code: ${response.status}`);
             }
         } catch (error) {
             throw new Error(`Error khi kiểm tra IP của proxy: ${error.message}`);
         }
-    }
-
-    log(msg, type = 'info') {
-        const timestamp = new Date().toLocaleTimeString();
-        switch(type) {
-            case 'success':
-                console.log(`[${timestamp}] [*] ${msg}`.green);
-                break;
-            case 'custom':
-                console.log(`[${timestamp}] [*] ${msg}`.magenta);
-                break;        
-            case 'error':
-                console.log(`[${timestamp}] [!] ${msg}`.red);
-                break;
-            case 'warning':
-                console.log(`[${timestamp}] [*] ${msg}`.yellow);
-                break;
-            default:
-                console.log(`[${timestamp}] [*] ${msg}`);
-        }
-    }
-
-    async countdown(seconds) {
-        for (let i = seconds; i > 0; i--) {
-            const timestamp = new Date().toLocaleTimeString();
-            readline.cursorTo(process.stdout, 0);
-            process.stdout.write(`[${timestamp}] [*] Chờ ${i} giây để tiếp tục...`);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        readline.cursorTo(process.stdout, 0);
-        readline.clearLine(process.stdout, 0);
     }
 
     async callBinanceAPI(queryString, axios) {
@@ -128,7 +132,7 @@ class Binance {
             this.game_response = response.data;
 
             if (response.data.code === '000000') {
-                this.log("Bắt đầu game thành công", 'success');
+                this.log("Bắt đầu game thành công, không đóng tool trước khi hoàn thành", 'success');
                 return true;
             }
 
@@ -151,7 +155,6 @@ class Binance {
 
             if (response.data.message === 'success') {
                 this.game = response.data.game;
-                this.log("Nhận dữ liệu game thành công", 'success');
                 return true;
             }
 
@@ -264,25 +267,21 @@ class Binance {
         }
     }
 
-    async playGameIfTicketsAvailable(queryString, accountIndex, firstName, proxy) {
-        let proxyIP = "Unknown";
+    async playGameIfTicketsAvailable() {
         try {
-            proxyIP = await this.checkProxyIP(proxy);
+            await this.checkProxyIP();
         } catch (error) {
-            throw new Error(`Không thể kiểm tra IP của proxy. Status code: ${response.status}`);
+            this.log(`Không thể kiểm tra IP của proxy: ${error.message}`, 'error');
+            return;
         }
 
-        console.log(`========== Tài khoản ${accountIndex} | ${firstName.green} | ip: ${proxyIP} ==========`);
-        
-        const axiosInstance = this.createAxiosInstance(proxy);
-        const result = await this.callBinanceAPI(queryString, axiosInstance);
+        const axiosInstance = this.createAxiosInstance();
+        const result = await this.callBinanceAPI(this.queryString, axiosInstance);
         if (!result) return;
 
         const { userInfo, accessToken } = result;
         const totalGrade = userInfo.metaInfo.totalGrade;
-        let totalAttempts = userInfo.metaInfo.totalAttempts; 
-        let consumedAttempts = userInfo.metaInfo.consumedAttempts; 
-        let availableTickets = totalAttempts-consumedAttempts;
+        let availableTickets = userInfo.metaInfo.totalAttempts - userInfo.metaInfo.consumedAttempts;
 
         this.log(`Tổng điểm: ${totalGrade}`);
         this.log(`Vé đang có: ${availableTickets}`);
@@ -292,11 +291,13 @@ class Binance {
             
             if (await this.startGame(accessToken, axiosInstance)) {
                 if (await this.gameData()) {
-                    await this.countdown(50);
+                    await new Promise(resolve => setTimeout(resolve, 50000));
                     
                     if (await this.completeGame(accessToken, axiosInstance)) {
                         availableTickets--;
                         this.log(`Vé còn lại: ${availableTickets}`, 'info');
+                        
+                        await new Promise(resolve => setTimeout(resolve, 3000));
                     } else {
                         break;
                     }
@@ -308,47 +309,80 @@ class Binance {
                 this.log("Không thể bắt đầu trò chơi", 'error');
                 break;
             }
-
-            if (availableTickets > 0) {
-                await new Promise(resolve => setTimeout(resolve, 3000));
-            }
         }
 
         if (availableTickets === 0) {
             this.log("Đã sử dụng hết vé", 'success');
         }
     }
-
-    async main() {
-        const dataFile = path.join(__dirname, 'data.txt');
-        const data = fs.readFileSync(dataFile, 'utf8')
-            .replace(/\r/g, '')
-            .split('\n')
-            .filter(Boolean);
-
-        while (true) {
-            for (let i = 0; i < data.length; i++) {
-                const queryString = data[i];
-                const userData = JSON.parse(decodeURIComponent(queryString.split('user=')[1].split('&')[0]));
-                const firstName = userData.first_name;
-                const proxy = this.proxies[i % this.proxies.length];
-                
-                try {
-                    await this.playGameIfTicketsAvailable(queryString, i + 1, firstName, proxy);
-                } catch (error) {
-                    this.log(`Lỗi xử lý tài khoản ${i + 1}: ${error.message}`, 'error');
-                }
-
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-
-            await this.countdown(1440 * 60);
-        }
-    }
 }
 
-const client = new Binance();
-client.main().catch(err => {
-    client.log(err.message, 'error');
-    process.exit(1);
-});
+if (isMainThread) {
+    const dataFile = path.join(__dirname, 'data.txt');
+    const proxyFile = path.join(__dirname, 'proxy.txt');
+
+    const data = fs.readFileSync(dataFile, 'utf8')
+        .replace(/\r/g, '')
+        .split('\n')
+        .filter(Boolean);
+
+    const proxies = fs.readFileSync(proxyFile, 'utf8')
+        .split('\n')
+        .filter(Boolean);
+
+    const maxThreads = 10; //số luồng
+    const timeout = 10 * 60 * 1000;
+    const waitTime = 60 * 60 * 1000; //1 giờ
+
+    async function runWorkers() {
+        while (true) {
+            console.log(`Đã dùng thì đừng sợ, đã sợ thì đừng dùng...`.yellow);
+            
+            for (let i = 0; i < data.length; i += maxThreads) {
+                const workerPromises = [];
+
+                for (let j = 0; j < maxThreads && i + j < data.length; j++) {
+                    const accountIndex = i + j;
+                    const queryString = data[accountIndex];
+                    const proxy = proxies[accountIndex % proxies.length];
+
+                    const worker = new Worker(__filename, {
+                        workerData: { accountIndex, queryString, proxy }
+                    });
+
+                    const workerPromise = new Promise((resolve, reject) => {
+                        worker.on('message', resolve);
+                        worker.on('error', reject);
+                        worker.on('exit', (code) => {
+                            if (code !== 0) reject(new Error(`Luồng bị dừng với mã ${code}`));
+                        });
+
+                        setTimeout(() => {
+                            worker.terminate();
+                            reject(new Error('Worker timed out'));
+                        }, timeout);
+                    });
+
+                    workerPromises.push(workerPromise);
+                }
+
+                await Promise.allSettled(workerPromises);
+                await new Promise(resolve => setTimeout(resolve, 3 * 1000));
+            }
+
+            console.log(`Tất cả các tài khoản được xử lý. Đang chờ đợi ${waitTime / 60000} phút trước khi bắt đầu vòng tiếp theo...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+    }
+
+    runWorkers().catch(console.error);
+} else {
+    const { accountIndex, queryString, proxy } = workerData;
+    const client = new Binance(accountIndex, queryString, proxy);
+    client.playGameIfTicketsAvailable().then(() => {
+        parentPort.postMessage('done');
+    }).catch(error => {
+        console.error(`Worker error: ${error.message}`);
+        parentPort.postMessage('error');
+    });
+}
